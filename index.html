@@ -25,20 +25,27 @@
     );
   }
 
-  const cA = h2r("#1a1a1a"),
-    cB = h2r("#7a2a0a"),
-    cC = h2r("#cc3a10");
-  const sA = h2r("#ff4400"),
-    sB = h2r("#ff9900");
+  const cC_normal = h2r("#1a1008");
+  const cC_short = h2r("#6b2408");
+  const cB = h2r("#6b2408"),
+    cA = h2r("#b03010");
+  const sA = h2r("#aa1a00"),
+    sB = h2r("#dd3300");
+  const sBright = h2r("#ff4400");
 
-  function gradColor(t) {
+  function gradColor(t, noBlack) {
+    const start = noBlack ? cC_short : cC_normal;
     if (t < 0.5) {
       const tt = t / 0.5;
-      return cA.map((c, k) => lerp(c, cB[k], tt));
+      return start.map((c, k) => lerp(c, cB[k], tt));
     } else {
       const tt = (t - 0.5) / 0.5;
-      return cB.map((c, k) => lerp(c, cC[k], tt));
+      return cB.map((c, k) => lerp(c, cA[k], tt));
     }
+  }
+
+  function sharpGradColor(t, sharpness, noBlack) {
+    return gradColor(Math.pow(t, sharpness), noBlack);
   }
 
   function applyEffect(wrap) {
@@ -79,36 +86,69 @@
     const N = allLetters.length;
     if (N === 0) return;
 
-    const GRAD_START = N <= 4 ? 0 : N - Math.round(N * 0.6);
-    const GRAD_TOTAL = N - GRAD_START;
-    const STROKE_COUNT = Math.max(1, Math.round(N * 0.35));
+    const MAX_GRAD = 8;
+    const MAX_STROKE = 6;
+    const noBlack = N <= 3;
+
+    const GRAD_COUNT = N <= MAX_GRAD ? N : MAX_GRAD;
+    const STROKE_COUNT = N <= 2 ? N : N < 8 ? Math.ceil(N / 2) : MAX_STROKE;
+    const GLOW_COUNT = Math.min(GRAD_COUNT, STROKE_COUNT + 1);
+
+    const GRAD_START = N - GRAD_COUNT;
     const STROKE_START = N - STROKE_COUNT;
+    const GLOW_START = N - GLOW_COUNT;
+
+    const BRIGHT_COUNT = Math.min(3, STROKE_COUNT);
+    const BRIGHT_START = N - BRIGHT_COUNT;
+
     const glowMult = clamp(0.25 + (N / 10) * 0.75, 0.25, 1.0);
+    const tMin = noBlack
+      ? 0.3
+      : N <= MAX_GRAD
+        ? clamp(1 - N * 0.1, 0.15, 0.45)
+        : 0.15;
+    const sharpness =
+      N <= MAX_GRAD
+        ? clamp(lerp(2.5, 1.0, (N - 1) / (MAX_GRAD - 1)), 1.0, 2.5)
+        : 1.0;
 
     allLetters.forEach((span, i) => {
       let fill;
-
       if (i < GRAD_START) {
-        fill = r2h(...cA);
+        fill = r2h(...(noBlack ? cC_short : cC_normal));
       } else {
-        const t = GRAD_TOTAL <= 1 ? 1 : (i - GRAD_START) / (GRAD_TOTAL - 1);
-        fill = r2h(...gradColor(t));
+        const tRaw = GRAD_COUNT <= 1 ? 1 : (i - GRAD_START) / (GRAD_COUNT - 1);
+        const t = lerp(tMin, 1, tRaw);
+        fill = r2h(...sharpGradColor(t, sharpness, noBlack));
       }
-
       span.style.color = fill;
+
+      const inGlow = i >= GLOW_START;
+      const glowT = inGlow ? (i - GLOW_START) / Math.max(GLOW_COUNT - 1, 1) : 0;
 
       if (i >= STROKE_START) {
         const st =
           STROKE_COUNT === 1 ? 1 : (i - STROKE_START) / (STROKE_COUNT - 1);
-        const strokeW = lerp(0.014, 0.028, st) * fs;
+        const isBright = i >= BRIGHT_START;
+        const brightT = isBright
+          ? (i - BRIGHT_START) / Math.max(BRIGHT_COUNT - 1, 1)
+          : 0;
+
+        const strokeW = lerp(0.014, 0.026, st) * fs;
         const sw = strokeW.toFixed(2);
         const d = (strokeW * 0.65).toFixed(2);
-        const glowSpread = (lerp(0.02, 0.08, st) * fs * glowMult).toFixed(2);
-        const glowOffset = (0.04 * fs).toFixed(2);
-        const blurPx = (lerp(0, 0.01, st) * fs).toFixed(2);
+        const blurPx = (lerp(0, 0.007, st) * fs).toFixed(2);
 
-        const sc = sA.map((c, k) => lerp(c, sB[k], st));
-        const strokeCol = r2h(...sc);
+        let strokeCol;
+        if (isBright) {
+          strokeCol = r2h(...sB.map((c, k) => lerp(c, sBright[k], brightT)));
+        } else {
+          strokeCol = r2h(...sA.map((c, k) => lerp(c, sB[k], st)));
+        }
+
+        const glowRadius = isBright
+          ? (lerp(0.06, 0.16, brightT) * fs * glowMult).toFixed(2)
+          : (lerp(0.02, 0.06, st) * fs * glowMult).toFixed(2);
 
         span.style.webkitTextFillColor = fill;
         span.style.textShadow = `
@@ -124,9 +164,13 @@
          ${d}px -${d}px 0 ${strokeCol},
         -${d}px  ${d}px 0 ${strokeCol},
          ${d}px  ${d}px 0 ${strokeCol},
-        0 ${glowOffset}px ${glowSpread}px ${strokeCol}
+        0 0 ${glowRadius}px ${strokeCol}
       `;
         if (blurPx > 0.05) span.style.filter = `blur(${blurPx}px)`;
+      } else if (inGlow) {
+        const glowSpread = (lerp(0.01, 0.04, glowT) * fs * glowMult).toFixed(2);
+        const glowCol = r2h(...sA.map((c, k) => lerp(c, sB[k], glowT * 0.5)));
+        span.style.textShadow = `0 0 ${glowSpread}px ${glowCol}`;
       }
     });
   }
